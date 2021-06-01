@@ -1,39 +1,54 @@
-##I know, comments are in frenc instead of english, i'll change it tomorrow
+##I know, comments are in french instead of english, i'll change it tomorrow
 
 
 
-##Iportation des librairies standrds de python
-import socket #Pour les connexions tcp/http
-import _thread as thread #Pour géréer chaque client indépenament
-import urllib.parse #Pour analyser les requetes http
-import json #Pour manipuler des dictionnaires contennus dans des fichier json
-import time #Pour ajouter un unité de temps au logs
-import sys #Pour la configuration et le démarrage en lignes de comande
-import os #Effectuer des opération sur l'os
-import random #Pour les salt du hachage et les codes de sessions
-import hashlib #Pour le hashage des mdps et des cookies
+##Importing python libraries
+import socket #To create a TCP server
+import _thread as thread #To process all the request at the same time
+import urllib.parse #To help parsing HTTP requests
+import json #To parse and dump sessio's content
+import time #To time the logs
+import sys #To start and configutre the server using command line AND to edit the path of libs for the .py web pages
+import os #To add, remove and list files
+import random #To create random salts
+import hashlib #To provide extended hashing functions
 
 
-##Impoprt des librairies tierces
-import ftfy #Pour résoudre des problèmes d'encodage
+##Importing 3rd party libraries
+try:
+    import ftfy #To solve some HTTP encoding issues
+except:
+    print("[FATAL ERROR] Requierment not satisfied please install ftfy then restart the server")
 
 
 def salthash(string,salt):
+    """
+Generate an hash using a salt in order to make it really hard to crack
+"""
     if type(string) == str: string = string.encode("utf-8")
     if type(salt) == bytes: salt = salt.decode("utf-8")
     return hashlib.sha256(string+salt.encode("utf-8")).hexdigest()+salt+"l"+str(len(salt))
 
 def salthash_verify(crypted_string,string):
+    """
+Verify if the encrypted string provided have the string provided for origin
+"""
     if type(string) == str: string = string.encode("utf-8")
     if type(crypted_string) == bytes: crypted_string = crypted_string.decode("utf-8")
     salt = crypted_string[-(int(crypted_string.split("l")[-1])+1+len(crypted_string.split("l")[-1])):-(1+len(crypted_string.split("l")[-1]))]
     return crypted_string == salthash(string, salt)
 def random_salt():
+    """
+Generate a random salt which is a random number that had been hashed without salt
+"""
     return hashlib.sha256(str(random.choice([-1,1])*random.randint(1,99999)/random.randint(1,99999)).encode("utf-8")).hexdigest()
 
 
-def trash_truck(target = ["sessions"]): #Supprime tout les fichiers teporaires utilisés par le serveur
-    if "sessions" in target: #Supprime les sessions âgées de plus de 1000 secondes
+def trash_truck(target = ["sessions"]):
+    """
+Remove all the temporary files that the server don't use anymore
+"""
+    if "sessions" in target: #Remove sessions older than 1000 seconds
         for i in os.listdir("sessions"):
             try:
                 with open(f"sessions/{i}","r") as session:session = json.load(session)
@@ -45,6 +60,9 @@ def trash_truck(target = ["sessions"]): #Supprime tout les fichiers teporaires u
 
           
 def prepare(path,headers=[]):
+    """
+Makes your .py web page able to return a file that is on your computer instead of a response object
+"""
     with open("content-types.json") as content_types: headers.append("Content-Type: "+json.load(content_types)[path.split(".")[-1]])
     with open(path,"rb") as file:
         response = b"HTTP/1.1 200 OK\n"
@@ -55,7 +73,14 @@ def prepare(path,headers=[]):
         
 
 def parse(request):
+    """
+For server use only
+Parse an HTTP request into a dictionary
+"""
     def extract(data):
+        """
+Extract data from a form
+"""
         form = {}
         for i in data.split("&"):
             i = i.split("=")
@@ -65,15 +90,14 @@ def parse(request):
         return form
         
     request = ftfy.fix_text(urllib.parse.unquote(request.decode("utf-8")))
-    #print(f"Request:{request}\n",end="")
-    data = {"GET":{}, #Les informations contennues dans l'url après le séparateur '?'
-            "POST":{}, #Les informations en bas de requète 
-            "method":"", #La méthode d'envoi des données (POST/GET)
-            "path":"", #Le chemin de la page à envoyer
-            "path_dir":"", #Le répertoire de la page à envoyer (utile côté page en .py pour tout ce qui est accès au db en sqlite3 par exemple)
+    data = {"GET":{}, #All informations given in the URL afet the separator '?'
+            "POST":{}, #All informations given at the and of the HTTP request
+            "method":"", #The method used to send the data (GET or POST)
+            "path":"", #The path of the web page requested
+            "path_dir":"", #The path of the directory where the requested web page is located (usefull for local storage managment)
             "subdomain":"", #Le sous-dommaine
             }
-    ##GET et POST sont en majuscule pour permettre de faire data[data["method"]]
+    ##GET and POST are in upper case to allow you to do data[data["method"]]
     
     data["method"] = request.split(" ")[0]
     
@@ -81,24 +105,24 @@ def parse(request):
     
     if data["method"] == "POST": data["POST"] = extract(request.split("\n")[-1])
 
-    if "?" in data["path"]: #Si l'url contient des données pour GET
+    if "?" in data["path"]: #If URL contains a GET form
         data["GET"] = extract(data["path"].split("?",1)[1])
-        data["path"] = data["path"].split("?",1)[0] #Nouveau chemin sans les données pour GET
+        data["path"] = data["path"].split("?",1)[0] #New path withot the GET form
 
-    data["path_dir"] = data["path"].rsplit("/",1)[0]+"/" #On ne définis pas path_dir avant au cas où path est modifié par l'extract de GET
+    data["path_dir"] = data["path"].rsplit("/",1)[0]+"/"
 
-    for i in request.split("\n"): #Ajoute les headers au dictionnaire
+    for i in request.split("\n"): #Add all the request's headers to the dirctionary
         i = i.split(": ",1)
         if len(i)==2: data.update({i[0]:i[1]})
 
     data["subdomain"] = data["Host"][:-len(data["Host"].split(".",len(data["Host"].split("."))-2)[-1])-1]
 
-    if "Cookie" in data: #Si les headres contiennent des cookies
+    if "Cookie" in data: #If ther's cookies
         cookies = {}
         for i in data["Cookie"].split(";"):
             i = i.lstrip(" ").split("=")
             cookies.update({i[0]:i[1]})
-        data["Cookie"] = cookies #Replace les données du header "Cookie" par un dictionnaire plus simple
+        data["Cookie"] = cookies #Replace what's inside the Cookie header with a more usable dictionary
 
     return data
 
@@ -125,11 +149,17 @@ Return a dict object containing all the informations in the table
             dict_list.append(row_dict)
         return dict_list
     def select(self,name,value):
+        """
+Return a dict object containing all the informations in the table coresponding to the querry
+"""
         return_list = []
         for i in self.load():
             if i[name] == value: return_list.append(i)
         return return_list
     def insert(self,data):
+        """
+Insert data in the table
+"""
         names = ""
         values = []
         for i in data:
@@ -138,28 +168,42 @@ Return a dict object containing all the informations in the table
         self.cursor.execute(f"INSERT INTO {self.table}({names[1:]}) VALUES({(',?'*len(data))[1:]})",tuple(values))
         return self
     def primary(self):
+        """
+Return all the primary keys of the table
+"""
         primaries = []
         for i in self.cursor.execute(f"PRAGMA table_info({self.table})").fetchall():
             if i[5] == 1: primaries.append(i[1])
         return primaries
     def sort(self,key):
+        """
+Return all the info in the table but they are sorted. Example :
+[{"key1":"value1","key2":"value2"},{"key1":"VALUE1","key2":"VALUIE2"}] -> sorting by "key1" -> {"value1":{"key2":"value2"},"VALUE1":{"key2":"VALUE2"}}
+Make SURE the key that you sort with is UNIQUE or you bad things cold happend
+"""
         sorted_dict = {}
         for i in self.load():
             sorted_dict.update({i[key]:i})
         return sorted_dict
 
-class Session(dict): #Partiellement copié depuis servlib5
+class Session(dict):
     """
-Permet de gérer une session d'utilisateur comparable à celles du PHP
+A class containing everyting required to create and use a session on server side
 """
-    def smart_connect(data): #Smart_connect remplace l'ip par un code généré coté serveur comme décrit dans root/new_session_system
+    def smart_connect(data):
+        """
+Return a session object
+Try to get the user session and if it can't create an new session
+Just make sure to place the code of the session in a cookie nammed "sessid" in order to bind it to the client
+Use it if you're a little bit lazy
+If you're really lazy, check Response.create_session (it will automaticly set the sessid cookie for you
+"""
         try:
             sess = Session(data["Cookie"]["sessid"]).load()
             for i in ["User-Agent","IP"]:
-                if sess[i] != data[i]: raise Exception("Spoffing spotted") #On lance une exception si on détecte un changement de user-agent ou d'IP de l'utilisateur
+                if sess[i] != data[i]: raise Exception("Spoffing spotted") #Raise an exception if a spoofing is suspected
             return sess
         except:
-            print("GENERATING_SESSION")
             while True:
                 code = str(random.randint(0,10000))
                 if code not in os.listdir("sessions"): break
@@ -171,9 +215,15 @@ Permet de gérer une session d'utilisateur comparable à celles du PHP
         self["last_use"] = self.last_use
         self.update(data)
     def dump(self):
+        """
+Save the session in his file
+"""
         with open("sessions/"+self.code+".json","w") as file: json.dump(self,file)
         return self
     def load(self):
+        """
+Load the session from his file
+"""
         with open("sessions/"+self.code+".json","r") as file: self.update(json.load(file))
         return self
         
@@ -182,16 +232,19 @@ Permet de gérer une session d'utilisateur comparable à celles du PHP
 
 class Response(): #Partiellement copié depuis servlib5
     """
-Response n'est pas vital pour  le serveur.
-En effet, il est seulement là pour simplifier l'écriture des pages en .py
-Il est d'ailleurs plustôt mal optimisé
-Cependant, il permet de créer une réponse http avec un minimum d'informations
+Response is responsebale of the autoformating of the HTTP response
+It was made with only one objective : make the server send something that have sense while providing him as less information as possible
+And it's in this way that i've included a lot of auto corecting code 
 """
     def __init__(self,content="",headers=[],code="200 OK"):
         self.content = content
         self.headers = headers
         self.code = code
     def encode(self, encoding = False):
+        """
+Return a byte like object which is en HTTP response ready to be sent to the client
+
+"""
         if encoding:
             if "<head>" in self.content: self.content = self.content.replace("<head>", f"""<head>\n<meta http-equiv="Content-Type" content="text/html; charset={encoding}" />""")
             else: self.content = self.content.replace("<html>", f"""<html><head>\n<meta http-equiv="Content-Type" content="text/html; charset={encoding}" /></head>""")
@@ -205,6 +258,13 @@ Cependant, il permet de créer une réponse http avec un minimum d'informations
         elif type(self.content) == bytes: return response.encode(encoding)+self.content
         else: return (response+"\n<html><head><title>ERROR</title></head><body><h1>ERROR</h1></body></html>").encode(encoding)
     def add_cookie(self,cookie):
+        """
+Add a cookie header to the response
+Accept :
+    - string (the cookie header EX: "Set-Cookie: username=john; Max-Age=10000")
+    - dictionary (filled with the attributes of the header EX: {"sessid":"98546","Max-Age":"10000"})
+    - list (have to contain string and/or dict EX: ["Set-Cookie: username=john; Max-Age=10000",{"sessid":"98546","Max-Age":"10000"}])
+"""
         if type(cookie) == str: self.headers.append(cookie)
         elif type(cookie) == dict:
             temp_cookie = "Set-Cookie: "
@@ -213,6 +273,10 @@ Cependant, il permet de créer une réponse http avec un minimum d'informations
         elif type(cookie) == list:
             for i in cookie: self.add_cookie(i)
     def create_session(self,data):
+        """
+Use the data that the server give to the main function of your .py web page to return a ready for use session
+it alse automaticly create the sessid cooke
+"""
         sess = Session.smart_connect(data)
         try:
             if data["Cookie"]["sessid"] == sess.code: pass
@@ -222,6 +286,9 @@ Cependant, il permet de créer une réponse http avec un minimum d'informations
 
 
 class Server():
+    """
+A real mess ! Wait for the PyHP new server system, it will be more understandable
+"""
     def __init__(self,address = "", port = 80, root = "root", log = "log.txt", cs_compatibility = True):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #Cré le socket
         self.socket.bind((address,port)) #Lie le socket à l'adresse et au port en argument de la fonction
